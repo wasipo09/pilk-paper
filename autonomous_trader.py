@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
 Autonomous Pilk Paper Trader
-Analyzes positions, manages risk, trades based on signals
+Analyzes positions from trade_log.json only
 """
-import subprocess
 import json
 import sys
 import os
@@ -11,38 +10,39 @@ import time
 
 PAPER_TRADER_DIR = "/home/ubuntu/.openclaw/workspace/pilk-paper"
 TOLERANCE = 0.15  # Close if position is 15% underwater
-MAX_DRAWDOWN_PER_POSITION = 0.10  # Max 10% of margin can be lost per position
-MAX_TOTAL_DRAWDOWN = 0.20  # Max 20% total portfolio drawdown
 
 def get_equity():
-    """Get current equity"""
-    try:
-        proc = subprocess.run(
-            ['venv/bin/python', 'paper_trader.py'],
-            cwd=PAPER_TRADER_DIR,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=10
-        )
-
-        output = proc.stdout
-        for line in output.split('\n'):
-            if 'Total Equity:' in line:
-                return float(line.split('Total Equity:')[1].strip().replace('USDT', '').replace(',', '').strip())
-    except Exception as e:
-        print(f"Error getting equity: {e}")
-    return 0
-
-def get_positions():
-    """Get current positions"""
+    """Get current equity from trade_log.json"""
     try:
         with open(os.path.join(PAPER_TRADER_DIR, 'trade_log.json'), 'r') as f:
             data = json.load(f)
-            return data.get('positions', {})
+
+            balance = data.get('balance', 1000)
+
+            # Calculate equity from positions
+            positions = data.get('positions', {})
+            equity = balance
+
+            for position_list in positions.values():
+                for pos in position_list:
+                    equity += pos['margin']
+
+            return equity, balance
     except Exception as e:
-        print(f"Error reading positions: {e}")
-    return {}
+        print(f"Error getting equity: {e}")
+    return 0, 0
+
+def get_current_price(symbol):
+    """Get current price for a symbol using web fetch"""
+    try:
+        import requests
+        url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            return float(response.json()['price'])
+    except:
+        pass
+    return None
 
 def close_position(symbol):
     """Close a position"""
@@ -55,18 +55,13 @@ def close_position(symbol):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=15
+            timeout=10
         )
 
         output = proc.stdout
         if 'Closed' in output or 'Closing' in output:
-            print(f"✓ Closed {symbol}")
+            print(f"Closed {symbol}")
             return True
-
-        # If output is empty, check stderr
-        if proc.stderr:
-            print(f"Output: {output}")
-            print(f"Stderr: {proc.stderr}")
 
         return False
     except Exception as e:
@@ -78,7 +73,13 @@ def open_position(symbol, side, margin, leverage):
     try:
         print(f"Opening {side} {symbol} {leverage}x with ${margin} margin...")
 
-        # Get current price
+        # Get current price first
+        price = get_current_price(symbol)
+        if not price:
+            print(f"Cannot get price for {symbol}")
+            return False
+
+        # Open position
         proc = subprocess.run(
             ['venv/bin/python', 'paper_trader.py'],
             cwd=PAPER_TRADER_DIR,
@@ -86,17 +87,13 @@ def open_position(symbol, side, margin, leverage):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=15
+            timeout=10
         )
 
         output = proc.stdout
         if side.upper() in output and 'Opened' in output:
-            print(f"✓ Opened {side} {symbol}")
+            print(f"Opened {side} {symbol}")
             return True
-
-        if proc.stderr:
-            print(f"Output: {output}")
-            print(f"Stderr: {proc.stderr}")
 
         return False
     except Exception as e:
@@ -105,9 +102,14 @@ def open_position(symbol, side, margin, leverage):
 
 def analyze_positions():
     """Analyze positions and make trading decisions"""
-    equity = get_equity()
-    balance = 0
-    positions = get_positions()
+    equity, balance = get_equity()
+
+    try:
+        with open(os.path.join(PAPER_TRADER_DIR, 'trade_log.json'), 'r') as f:
+            data = json.load(f)
+            positions = data.get('positions', {})
+    except:
+        positions = {}
 
     if not positions:
         print("No positions open")
@@ -119,6 +121,7 @@ def analyze_positions():
 
     total_margin = 0
     total_unrealized_pnl = 0
+    has_major_drawdown = False
 
     for symbol, position_list in positions.items():
         for pos in position_list:
@@ -129,78 +132,55 @@ def analyze_positions():
             position_type = pos['type']
             leverage = pos['leverage']
 
-            # Get current price
-            try:
-                proc = subprocess.run(
-                    ['venv/bin/python', 'paper_trader.py'],
-                    cwd=PAPER_TRADER_DIR,
-                    input='status\nquit\n',
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=10
-                )
+            # Get current price from Binance API
+            price = get_current_price(symbol)
+            if not price:
+                price = entry_price  # Fallback
 
-                output = proc.stdout
-                # Find current price for this symbol
-                price = None
-                for line in output.split('\n'):
-                    if symbol in line and 'Price' in line:
-                        parts = line.split()
-                        for i, part in enumerate(parts):
-                            if part.replace(',', '').replace('$', '').isdigit():
-                                price = float(part.replace(',', '').replace('$', ''))
-                                break
-                        break
+            # Calculate PnL
+            if position_type == 'long':
+                pnl = (price - entry_price) * size
+            else:
+                pnl = (entry_price - price) * size
 
-                if not price:
-                    price = entry_price  # Fallback
+            total_margin += margin
+            total_unrealized_pnl += pnl
 
-                # Calculate PnL
-                if position_type == 'long':
-                    pnl = (price - entry_price) * size
-                else:
-                    pnl = (entry_price - price) * size
+            roe = (pnl / margin) * 100 if margin > 0 else 0
 
-                total_margin += margin
-                total_unrealized_pnl += pnl
+            print(f"\n{symbol}:")
+            print(f"  Type: {position_type.upper()} {leverage}x")
+            print(f"  Margin: ${margin:.2f} | Entry: ${entry_price:.2f}")
+            print(f"  Current: ${price:.2f} | PnL: ${pnl:.2f} ({roe:.1f}%)")
+            print(f"  Liq Price: ${liq_price:.2f}")
 
-                roe = (pnl / margin) * 100
+            # Risk management decisions
+            if position_type == 'long' and price <= liq_price:
+                print(f"  LIQUIDATION IMMINENT! Price at {price:.2f} below liq at {liq_price:.2f}")
+                close_position(symbol)
+            elif position_type == 'short' and price >= liq_price:
+                print(f"  LIQUIDATION IMMINENT! Price at {price:.2f} above liq at {liq_price:.2f}")
+                close_position(symbol)
+            elif pnl < 0 and (pnl / margin) < -TOLERANCE:
+                print(f"  Position 15%+ underwater. Closing.")
+                close_position(symbol)
+            elif roe > 5:
+                print(f"  Profitable (5%+). Keep holding.")
+            elif roe < -5:
+                print(f"  Deep drawdown (-5%+). Consider reducing.")
 
-                print(f"\n{symbol}:")
-                print(f"  Type: {position_type.upper()} {leverage}x")
-                print(f"  Margin: ${margin:.2f} | Entry: ${entry_price:.2f}")
-                print(f"  Current: ${price:.2f} | PnL: ${pnl:.2f} ({roe:.1f}%)")
-                print(f"  Liq Price: ${liq_price:.2f}")
-
-                # Risk management decisions
-                if position_type == 'long' and price <= liq_price:
-                    print(f"  ⚠️  LIQUIDATION IMMINENT! Price at {price:.2f} below liq at {liq_price:.2f}")
-                    close_position(symbol)
-                elif position_type == 'short' and price >= liq_price:
-                    print(f"  ⚠️  LIQUIDATION IMMINENT! Price at {price:.2f} above liq at {liq_price:.2f}")
-                    close_position(symbol)
-                elif pnl < 0 and (pnl / margin) < -TOLERANCE:
-                    print(f"  ⚠️  Position 15%+ underwater. Consider closing.")
-                    # Close it (aggressive)
-                    close_position(symbol)
-                elif roe > 5:
-                    print(f"  ✓ Profitable (5%+). Keep holding.")
-
-            except Exception as e:
-                print(f"  Error analyzing position: {e}")
+            if (pnl / margin) < -TOLERANCE:
+                has_major_drawdown = True
 
     print(f"\n{'='*60}")
     print(f"Total: Margin ${total_margin:.2f} | PnL ${total_unrealized_pnl:.2f}")
     print(f"{'='*60}\n")
 
     # Check overall portfolio health
-    if total_unrealized_pnl < -MAX_DRAWDOWN_PER_POSITION * total_margin:
-        print(f"⚠️  Major drawdown. Consider reducing exposure.")
-        # Close highest loss position
-        # (Simplified: just warn for now)
+    if has_major_drawdown:
+        print(f"WARNING: Major drawdown detected. Consider reducing exposure.")
     elif equity < 1000 and len(positions) > 0:
-        print(f"⚠️  Equity below $1,000 with open positions. Consider reducing risk.")
+        print(f"Equity below $1,000 with open positions. Consider reducing risk.")
 
 def main():
     print(f"\n{'='*60}")
@@ -209,7 +189,7 @@ def main():
 
     analyze_positions()
 
-    print(f"Analysis complete. Check logs at: /tmp/pilk_telegram_updates.log")
+    print(f"\nAnalysis complete. Check logs at: /tmp/pilk_trading_cycle.log")
 
 if __name__ == '__main__':
     main()

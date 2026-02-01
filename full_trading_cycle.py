@@ -16,7 +16,7 @@ proc = subprocess.run(
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
     text=True,
-    timeout=30
+    timeout=20
 )
 
 print(proc.stdout)
