@@ -1,103 +1,109 @@
-# The Pilk Paper Trading Manual
+# Pilk Paper Trader Manual 📈
 
-Welcome to **Pilk Paper Trader**, a realistic cryptocurrency futures trading simulation running directly in your terminal. This tool allows you to practice trading with isolated margin, leverage, and real-time market data from Binance Futures, without risking real money.
+Welcome to the **Pilk Paper Trader**, a professional-grade cryptocurrency futures simulator running in your CLI. Test your strategies with **Isolated Margin**, **Leverage** (1x-50x), and real-time **Binance Futures** market data—risk-free.
 
-## Table of Contents
-1. [Installation](#installation)
-2. [Getting Started](#getting-started)
-3. [Game Mechanics](#game-mechanics)
-4. [Commands](#commands)
-5. [Data & Privacy](#data--privacy)
+---
 
-## Installation
+## 🚀 Quick Start
 
-Ensure you have Python 3.8+ installed.
-
-1. Clone this repository (or download the files).
-2. Install dependencies:
+1. **Install Dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-## Getting Started
+2. **Start a New Game** (Resets balance to $1,000):
+   ```bash
+   python paper_trader.py --new
+   ```
 
-To launch the game, run:
-```bash
-python paper_trader.py
-```
+3. **Continue Playing**:
+   ```bash
+   python paper_trader.py
+   ```
 
-### Starting a New Game
-If you are playing for the first time or want to reset your progress:
-```bash
-python paper_trader.py --new
-```
-This resets your balance to **1,000 USDT**.
+---
 
-## Game Mechanics
+## 🎮 Game Rules
 
-### 1. The Goal
-Grow your portfolio from **$1,000 USDT**. 
-The game ends if your Total Equity (Balance + Unrealized PnL) drops below **$5.00**.
+### The Goal
+You start with **$1,000 USDT**. Your goal is to grow this capital.
+- **Game Over**: If your Total Equity drops below **$5.00**, you are bankrupt.
+- **Winning**: There is no cap. How high can you go?
 
-### 2. Isolated Margin & Leverage
-Every trade is **Isolated**. This means you must specify exactly how much margin (collateral) you want to risk for that specific trade. 
-- You also select **Leverage** (1x to 50x).
-- **Notional Value** = Margin × Leverage.
-- **Liquidation**: If your position's loss equals or exceeds your Margin, the position is **Liquidated**. You lose the entire margin amount for that trade, but the rest of your account balance is safe.
+### Trading Mechanics (Important!)
+This game simulates **Isolated Margin** futures trading.
 
-*Example:*
-> You open a Long on BTC with $100 Margin at 10x Leverage.
-> - Position Size: $1,000 worth of BTC.
-> - If BTC drops by 10%, your position loses $100 (10% of $1,000).
-> - Since Loss ($100) == Margin ($100), you are **Liquidated**.
+1.  **Margin**: The specific amount of USDT you put up as collateral for a trade.
+2.  **Leverage**: Multiplies your buying power (1x to 50x).
+3.  **Liquidation**:
+    - If your position's **Unrealized Loss** equals or exceeds your **Margin**, you are **LIQUIDATED**.
+    - You lose 100% of the margin allocated to that trade.
+    - Your remaining account balance is safe (Isolated Margin).
 
-### 3. Fees
-Realism is key. Fees are deducted from your **Available Balance** immediately upon opening and closing trades.
-- **Taker Fee**: 0.05% of Notional Value.
-- **Maker Fee**: 0.02% (Not currently used as all orders are Market orders).
+> **Example**:
+> You open `long BTC/USDT 100 20`.
+> - Margin: $100
+> - Leverage: 20x
+> - Position Size: $2,000
+>
+> If BTC price drops **5%**, your position loses 5% of $2,000 = $100.
+> **Result**: You are liquidated. Your $100 is gone.
 
-*Note: High leverage means higher fees relative to your margin!*
+### Fees
+Fees are realistic and deducted from your **Available Balance** (not margin) immediately.
+- **Taker Fee**: 0.05% of the total position size (Notional Value).
+- *Tip: High leverage = High position size = High fees!*
 
-### 4. Real-time Updates
-Every time you enter a command, the system fetches live prices for ALL your open positions. 
-- **Liquidations are checked automatically.**
-- If a position is liquidated, it is removed, and the loss is realized immediately.
+---
 
-## Commands
+## 🕹 Command Reference
 
-### Status
-`status`
-Displays your current portfolio, including:
-- Margin usage per position
-- Entry Price vs Mark Price
-- **Liquidation Price** (Watch this closely!)
-- Unrealized PnL and ROE %
-- Total Account Equity
+### `status`
+View your live portfolio dashboard.
+- **Symbol**: Asset name.
+- **Side/Lev**: Long/Short and Leverage.
+- **Margin**: Collateral locked.
+- **Liq Price**: **CRITICAL**. If price hits this, you lose the position.
+- **PnL**: Profit or Loss in USDT.
+- **ROE%**: Return on Equity (Profit / Margin).
 
-### Long (Buy)
-`long <SYMBOL> <MARGIN> <LEVERAGE>`
-Opens a long position. You profit if the price goes UP.
-- Example: `long BTC/USDT 500 20`
-- Meaning: Use 500 USDT collateral at 20x leverage (Total Position: $10,000).
+### `long <SYMBOL> <MARGIN> <LEVERAGE>`
+Open a position profiting from price increases.
+- **Usage**: `long BTC 100 10`
+- *Meaning*: Bet on Bitcoin using $100 collateral at 10x leverage.
 
-### Short (Sell)
-`short <SYMBOL> <MARGIN> <LEVERAGE>`
-Opens a short position. You profit if the price goes DOWN.
-- Example: `short ETH/USDT 100 5`
+### `short <SYMBOL> <MARGIN> <LEVERAGE>`
+Open a position profiting from price drops.
+- **Usage**: `short ETH 50 5`
+- *Meaning*: Bet against Ethereum using $50 collateral at 5x leverage.
 
-### Close
-`close <SYMBOL>`
-Closes the entire position for a symbol at market price.
-- Example: `close BTC/USDT`
+### `close <SYMBOL>`
+Close an open position at market price and realize PnL.
+- **Usage**: `close BTC`
+- *Note*: You can only close the entire position in this version.
 
-### History
-`history`
-Shows the last 15 recorded transactions (Opens, Closes, Liquidations).
+### `history`
+View a log of your last 15 actions (Opens, Closes, Liquidations).
+- Full history is saved to `history.csv`.
 
-### Quit
-`quit` or `exit`
-Saves your state and exits the game.
+### `quit` or `exit`
+Save and Close the game.
 
-## Data & Privacy
-- **Market Data**: Fetched continuously from Binance public API. No API keys are required.
-- **Game Data**: Your trade history and balance are saved locally in `trade_log.json` and `history.csv`.
+---
+
+## 🧩 Advanced Details
+
+- **Global Refresh**: Every time you enter a command, the game fetches fresh prices for **ALL** your positions in real-time. If a price spike occurred while you were thinking, you might instantly see a liquidation message.
+- **Symbol Resolution**: You can type `BTC/USDT`, `BTC`, or `BTC/USDT:USDT`. The game is smart enough to find the correct futures ticker on Binance.
+- **Files**:
+  - `trade_log.json`: Stores your active session state.
+  - `history.csv`: A permanent record of every trade you've ever made.
+
+---
+
+## ⚠️ Troubleshooting
+
+- **"Symbol not found"**: Ensure you are trading a valid USDT-M Future pair (e.g., `BTC/USDT`, `ETH/USDT`, `DOGE/USDT`).
+- **Network Errors**: The game relies on the public Binance API. Rate limits or connection issues may cause occasional delays. Just try again.
+
+Good luck! 🌕 magnitude

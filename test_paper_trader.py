@@ -64,8 +64,10 @@ class TestPaperTrader(unittest.TestCase):
         
         self.player.execute_trade("LUNA/USDT", "long", margin, lev, price)
         
-        # Mock exchange to return liquidation price
-        self.exchange.get_price.return_value = 89.0 # Wiped out
+        # Mock exchange to return liquidation price via get_prices
+        # Note: Player stores the symbol as key, but might use feed_symbol.
+        # In test, feed_symbol defaults to symbol if not from resolve.
+        self.exchange.get_prices.return_value = {"LUNA/USDT": 89.0}
         
         # Update Portfolio
         self.player.update_portfolio(self.exchange)
@@ -82,7 +84,9 @@ class TestPaperTrader(unittest.TestCase):
         self.player.save_state()
         
         # Update portfolio should return equity
-        # With 4.0 balance and no positions, equity is 4.0
+        # Return empty dict for prices so no change in val
+        self.exchange.get_prices.return_value = {}
+        
         equity = self.player.update_portfolio(self.exchange)
         self.assertEqual(equity, 4.0)
         self.assertTrue(equity < paper_trader.MIN_EQUITY_GAME_OVER)

@@ -214,7 +214,25 @@ class Player:
             
             # Check    # Remove check_liquidations method from Player as it's done in update_portfolio
     # But for display_status we need similar batch logic, or just rely on passing prices.
+            self.log_history("CLOSE", symbol, pos['size'], price, pos['leverage'], pos['margin'], pnl, fee)
+            del self.positions[symbol]
 
+        self.save_state()
+
+    def save_state(self):
+        data = {
+            'balance': self.balance,
+            'positions': self.positions
+        }
+        with open(SAVE_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+
+    def load_state(self):
+        if os.path.exists(SAVE_FILE):
+            with open(SAVE_FILE, 'r') as f:
+                data = json.load(f)
+                self.balance = data.get('balance', INITIAL_BALANCE)
+                self.positions = data.get('positions', {})
 def display_status(player, exchange):
     # Collect feed symbols
     feed_map = {} 
