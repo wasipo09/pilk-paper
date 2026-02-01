@@ -108,40 +108,54 @@ class Player:
             return current_equity
 
         # Batch Fetch
-        # Collect all feed_symbols
-        # Note: self.positions keys are typically user-friendly names, 
-        # but we should store the real 'feed_symbol' inside the position dict for updates
-        
-        feed_map = {} # feed_symbol -> user_symbol
-        for s, pos in self.positions.items():
-            feed_sym = pos.get('feed_symbol', s) # Fallback to key if missing
-            feed_map[feed_sym] = s
-            
+        # Collect all feed_symbols from position objects
+        # Note: self.positions keys are user-friendly symbols, values are lists of position objects
+
+        # Build a map from feed_symbol to list of positions
+        feed_map = {} # feed_symbol -> [list of position objects]
+        for position_list in self.positions.values():
+            for pos in position_list:
+                feed_sym = pos.get('feed_symbol', None)
+                if feed_sym:
+                    if feed_sym not in feed_map:
+                        feed_map[feed_sym] = []
+                    feed_map[feed_sym].append(pos)
+
         prices = exchange.get_prices(list(feed_map.keys()))
-        
+
         positions_to_remove = []
 
-        for feed_sym, user_sym in feed_map.items():
-            pos = self.positions[user_sym]
+        for feed_sym, position_list in feed_map.items():
             price = prices.get(feed_sym)
-            
-            if not price:
-                current_equity += pos['margin']
-                continue
-                
-            pnl = self.calculate_pnl_raw(pos, price)
-            
-            if pos['margin'] + pnl <= 0:
-                console.print(f"[bold red]LIQUIDATION ALERT: {user_sym} position wiped out! Price: {price}[/bold red]")
-                positions_to_remove.append((user_sym, price, -pos['margin']))
-            else:
-                current_equity += (pos['margin'] + pnl)
 
-        for sym, price, loss in positions_to_remove:
-            pos = self.positions[sym]
-            self.log_history('LIQUIDATION', sym, pos['size'], price, pos['leverage'], pos['margin'], loss, 0)
-            del self.positions[sym]
-        
+            if not price:
+                # If we can't get a price for this symbol, skip it for now
+                for pos in position_list:
+                    current_equity += pos['margin']
+                continue
+
+            # Process all positions for this feed_symbol
+            for pos in position_list:
+                pnl = self.calculate_pnl_raw(pos, price)
+
+                if pos['margin'] + pnl <= 0:
+                    # Get the user symbol (the key in self.positions)
+                    user_sym = feed_sym  # Since we're using feed_sym as the key
+                    console.print(f"[bold red]LIQUIDATION ALERT: {user_sym} position wiped out! Price: {price}[/bold red]")
+                    positions_to_remove.append((feed_sym, price, -pos['margin']))
+                else:
+                    current_equity += (pos['margin'] + pnl)
+
+        for feed_sym, price, loss in positions_to_remove:
+            # Remove the position from the list
+            if feed_sym in self.positions and self.positions[feed_sym]:
+                pos = self.positions[feed_sym][-1]  # Get the last position
+                self.positions[feed_sym].pop()  # Remove it
+                # If the list is now empty, remove the key
+                if not self.positions[feed_sym]:
+                    del self.positions[feed_sym]
+                self.log_history('LIQUIDATION', feed_sym, pos['size'], price, pos['leverage'], pos['margin'], loss, 0)
+
         self.save_state()
         return current_equity
 
@@ -154,9 +168,12 @@ class Player:
             return (entry_price - current_price) * size
 
     def calculate_pnl(self, symbol, current_price):
-        pos = self.positions.get(symbol)
-        if not pos: return 0
-        return self.calculate_pnl_raw(pos, current_price)
+        positions = self.positions.get(symbol, [])
+        if not positions: return 0
+        total_pnl = 0
+        for pos in positions:
+            total_pnl += self.calculate_pnl_raw(pos, current_price)
+        return total_pnl
 
     def execute_trade(self, symbol, side, margin, leverage, price, feed_symbol=None):
         if side in ['long', 'short']:
@@ -164,33 +181,33 @@ class Player:
             if not (1 <= leverage <= 50):
                 console.print("[red]Leverage must be 1-50x[/red]")
                 return
-            
+
             if margin > self.balance:
                 console.print(f"[red]Insufficient balance. Available: {self.balance:.2f}[/red]")
                 return
-            
-            if symbol in self.positions:
-                console.print(f"[red]Already have position in {symbol}. Close first.[/red]")
-                return
+
+            # Allow multiple positions per symbol now
+            if symbol not in self.positions:
+                self.positions[symbol] = []
 
             notional = margin * leverage
             size = notional / price
             fee = notional * TAKER_FEE
-            
+
             total_cost = margin + fee
             if total_cost > self.balance:
                  console.print(f"[red]Cost ({total_cost:.2f}) exceeds balance.[/red]")
                  return
-                 
+
             self.balance -= total_cost
-            
+
             # Liq Price calculation
             if side == 'long':
                 liq_price = price - (margin / size)
             else:
                 liq_price = price + (margin / size)
 
-            self.positions[symbol] = {
+            position = {
                 'type': side,
                 'margin': margin,
                 'leverage': leverage,
@@ -200,22 +217,32 @@ class Player:
                 'feed_symbol': feed_symbol or symbol,
                 'timestamp': datetime.now().isoformat()
             }
-            
+
+            self.positions[symbol].append(position)
+
             console.print(f"[green]Opened {side.upper()} {symbol}. Size: {size:.4f}, Liq: {liq_price:.2f}[/green]")
             self.log_history(f"OPEN_{side.upper()}", symbol, size, price, leverage, margin, 0, fee)
-            
+
         elif side == 'close':
-            pos = self.positions.get(symbol)
-            if not pos:
+            # Find the position(s) with this symbol
+            positions = self.positions.get(symbol, [])
+            if not positions:
                 console.print(f"[red]No position in {symbol}[/red]")
                 return
-                
+
+            # Since we're closing all positions for this symbol
+            pos = positions[-1]  # Close the most recent position first
+
             pnl = self.calculate_pnl(symbol, price)
-            
-            # Check    # Remove check_liquidations method from Player as it's done in update_portfolio
-    # But for display_status we need similar batch logic, or just rely on passing prices.
-            self.log_history("CLOSE", symbol, pos['size'], price, pos['leverage'], pos['margin'], pnl, fee)
-            del self.positions[symbol]
+
+            self.log_history("CLOSE", symbol, pos['size'], price, pos['leverage'], pos['margin'], pnl, 0)
+
+            # Remove the position from the list
+            self.positions[symbol].pop()
+
+            # If no more positions for this symbol, remove the key
+            if not self.positions[symbol]:
+                del self.positions[symbol]
 
         self.save_state()
 
@@ -232,14 +259,37 @@ class Player:
             with open(SAVE_FILE, 'r') as f:
                 data = json.load(f)
                 self.balance = data.get('balance', INITIAL_BALANCE)
-                self.positions = data.get('positions', {})
+                positions = data.get('positions', {})
+
+                # Handle backward compatibility: if positions are stored as a list instead of dict
+                if isinstance(positions, list):
+                    # Convert list to dict with feed_symbol as key
+                    new_positions = {}
+                    for pos in positions:
+                        if isinstance(pos, dict):
+                            feed_symbol = pos.get('feed_symbol', 'UNKNOWN')
+                            new_positions[feed_symbol] = []
+                    self.positions = new_positions
+
+                    # Now add all positions to their respective feed_symbol keys
+                    for pos in positions:
+                        if isinstance(pos, dict):
+                            feed_symbol = pos.get('feed_symbol', 'UNKNOWN')
+                            if feed_symbol in self.positions:
+                                self.positions[feed_symbol].append(pos)
+                else:
+                    self.positions = positions
 def display_status(player, exchange):
     # Collect feed symbols
-    feed_map = {} 
-    for s, pos in player.positions.items():
-        feed_sym = pos.get('feed_symbol', s)
-        feed_map[feed_sym] = s
-        
+    feed_map = {}  # feed_symbol -> [list of position objects]
+    for position_list in player.positions.values():
+        for pos in position_list:
+            feed_sym = pos.get('feed_symbol', None)
+            if feed_sym:
+                if feed_sym not in feed_map:
+                    feed_map[feed_sym] = []
+                feed_map[feed_sym].append(pos)
+
     # Batch fetch
     with console.status("[cyan]Fetching prices...[/cyan]"):
         prices = exchange.get_prices(list(feed_map.keys()))
@@ -252,33 +302,45 @@ def display_status(player, exchange):
     table.add_column("Mark Price")
     table.add_column("Liq Price", style="red")
     table.add_column("PnL")
-    
+
     current_equity = player.balance
-    
-    for feed_sym, user_sym in feed_map.items():
-        pos = player.positions[user_sym]
+
+    for feed_sym, position_list in feed_map.items():
         price = prices.get(feed_sym)
-        
+
         if not price:
-            current_equity += pos['margin']
+            # If we can't get a price for this symbol, skip it for now
+            for pos in position_list:
+                current_equity += pos['margin']
+                table.add_row(
+                    feed_sym,
+                    f"{pos['type'].upper()} {pos['leverage']}x",
+                    f"{pos['margin']:.2f}",
+                    f"{pos['entry_price']:.2f}",
+                    f"N/A",
+                    f"{pos['liq_price']:.2f}",
+                    f"[dim]Price unavailable[/dim]"
+                )
             continue
-            
-        pnl = player.calculate_pnl_raw(pos, price)
-        current_equity += (pos['margin'] + pnl)
-        
-        roe = (pnl / pos['margin']) * 100
-        color = "green" if pnl >= 0 else "red"
-        
-        table.add_row(
-            user_sym,
-            f"{pos['type'].upper()} {pos['leverage']}x",
-            f"{pos['margin']:.2f}",
-            f"{pos['entry_price']:.2f}",
-            f"{price:.2f}",
-            f"{pos['liq_price']:.2f}",
-            f"[{color}]{pnl:.2f} ({roe:.0f}%)[/{color}]"
-        )
-        
+
+        # Process all positions for this feed_symbol
+        for pos in position_list:
+            pnl = player.calculate_pnl_raw(pos, price)
+            current_equity += (pos['margin'] + pnl)
+
+            roe = (pnl / pos['margin']) * 100
+            color = "green" if pnl >= 0 else "red"
+
+            table.add_row(
+                feed_sym,
+                f"{pos['type'].upper()} {pos['leverage']}x",
+                f"{pos['margin']:.2f}",
+                f"{pos['entry_price']:.2f}",
+                f"{price:.2f}",
+                f"{pos['liq_price']:.2f}",
+                f"[{color}]{pnl:.2f} ({roe:.0f}%)[/{color}]"
+            )
+
     console.print(table)
     console.print(f"Total Equity: [bold]{current_equity:.2f} USDT[/bold]")
 
