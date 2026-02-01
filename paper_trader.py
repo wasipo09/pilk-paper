@@ -302,11 +302,12 @@ def print_history():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--new', action='store_true', help="Start new game")
+    parser.add_argument('--start', action='store_true', help="Start new game (alias for --new)")
     args = parser.parse_args()
 
     console.print("[bold yellow]Pilk Paper Trader v2.0[/bold yellow]")
     
-    if args.new:
+    if args.new or args.start:
         if os.path.exists(SAVE_FILE):
             os.rename(SAVE_FILE, f"{SAVE_FILE}.bak")
         player = Player(reset=True)
@@ -321,7 +322,7 @@ def main():
              equity = player.update_portfolio(exchange)
              
         if equity < MIN_EQUITY_GAME_OVER:
-            console.print(Panel(f"[bold red]GAME OVER[/bold red]\n\nYour equity ({equity:.2f} USDT) has dropped below 5 USDT.\n\nUse --new to restart."))
+            console.print(Panel(f"[bold red]GAME OVER[/bold red]\n\nYour equity ({equity:.2f} USDT) has dropped below 5 USDT.\n\nUse --start to start a new game."))
             sys.exit(0)
         # GLOBAL UPDATE END
 
