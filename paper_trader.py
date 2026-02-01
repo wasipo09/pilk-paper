@@ -30,24 +30,39 @@ class PaperExchange:
             # Silent fail on init, retry in usage
             pass
 
-    def get_price(self, symbol):
-        # Try exact match first
+    def resolve_symbol_and_price(self, symbol):
+        # Returns (feed_symbol, price) or (None, None)
+        # 1. Try exact
         if symbol in self.exchange.markets:
             try:
                 ticker = self.exchange.fetch_ticker(symbol)
-                return ticker['last']
-            except:
-                pass
+                return symbol, ticker['last']
+            except: pass
+            
+        # 2. Try :USDT
+        alt = f"{symbol}:USDT"
+        if alt in self.exchange.markets:
+             try:
+                ticker = self.exchange.fetch_ticker(alt)
+                return alt, ticker['last']
+             except: pass
         
-        # Try appending :USDT
-        alt_symbol = f"{symbol}:USDT"
-        if alt_symbol in self.exchange.markets:
-            try:
-                ticker = self.exchange.fetch_ticker(alt_symbol)
-                return ticker['last']
-            except:
-                pass
-        return None
+        return None, None
+
+    def get_price(self, symbol):
+        # Legacy single fetch (for close/open checks)
+        sym, price = self.resolve_symbol_and_price(symbol)
+        return price
+
+    def get_prices(self, symbols):
+        # Batch fetch
+        if not symbols: return {}
+        try:
+            tickers = self.exchange.fetch_tickers(symbols)
+            return {s: t['last'] for s, t in tickers.items()}
+        except Exception as e:
+            console.print(f"[red]Batch fetch failed: {e}[/red]")
+            return {}
 
 class Player:
     def __init__(self, reset=False):
@@ -88,43 +103,44 @@ class Player:
             ])
 
     def update_portfolio(self, exchange):
-        # 1. Fetch current prices for ALL open positions
-        # 2. Check liquidations
-        # 3. Return current equity
-        
         current_equity = self.balance
-        positions_to_remove = []
-        
         if not self.positions:
             return current_equity
 
-        # We need prices for all keys
-        for symbol, pos in self.positions.items():
-            price = exchange.get_price(symbol)
-            if not price:
-                # If we can't fetch price, we skip logic for this tick to avoid false liq
-                # But we add margin back to equity as 'value'
-                current_equity += pos['margin'] 
-                continue
+        # Batch Fetch
+        # Collect all feed_symbols
+        # Note: self.positions keys are typically user-friendly names, 
+        # but we should store the real 'feed_symbol' inside the position dict for updates
+        
+        feed_map = {} # feed_symbol -> user_symbol
+        for s, pos in self.positions.items():
+            feed_sym = pos.get('feed_symbol', s) # Fallback to key if missing
+            feed_map[feed_sym] = s
             
+        prices = exchange.get_prices(list(feed_map.keys()))
+        
+        positions_to_remove = []
+
+        for feed_sym, user_sym in feed_map.items():
+            pos = self.positions[user_sym]
+            price = prices.get(feed_sym)
+            
+            if not price:
+                current_equity += pos['margin']
+                continue
+                
             pnl = self.calculate_pnl_raw(pos, price)
             
-            # Check Liquidation
-            # In isolated margin: if PnL + Margin <= 0 -> Liquidated.
             if pos['margin'] + pnl <= 0:
-                console.print(f"[bold red]LIQUIDATION ALERT: {symbol} position wiped out! Price: {price}[/bold red]")
-                positions_to_remove.append(
-                    (symbol, price, -pos['margin']) # PnL is negative margin (loss)
-                )
-                # No equity added (it's gone)
+                console.print(f"[bold red]LIQUIDATION ALERT: {user_sym} position wiped out! Price: {price}[/bold red]")
+                positions_to_remove.append((user_sym, price, -pos['margin']))
             else:
                 current_equity += (pos['margin'] + pnl)
 
-        # Process liquidations
-        for symbol, liq_price, liq_pnl in positions_to_remove:
-            pos = self.positions[symbol]
-            self.log_history('LIQUIDATION', symbol, pos['size'], liq_price, pos['leverage'], pos['margin'], liq_pnl, 0)
-            del self.positions[symbol]
+        for sym, price, loss in positions_to_remove:
+            pos = self.positions[sym]
+            self.log_history('LIQUIDATION', sym, pos['size'], price, pos['leverage'], pos['margin'], loss, 0)
+            del self.positions[sym]
         
         self.save_state()
         return current_equity
@@ -142,7 +158,7 @@ class Player:
         if not pos: return 0
         return self.calculate_pnl_raw(pos, current_price)
 
-    def execute_trade(self, symbol, side, margin, leverage, price):
+    def execute_trade(self, symbol, side, margin, leverage, price, feed_symbol=None):
         if side in ['long', 'short']:
             # Limits
             if not (1 <= leverage <= 50):
@@ -181,6 +197,7 @@ class Player:
                 'size': size,
                 'entry_price': price,
                 'liq_price': liq_price,
+                'feed_symbol': feed_symbol or symbol,
                 'timestamp': datetime.now().isoformat()
             }
             
@@ -195,45 +212,20 @@ class Player:
                 
             pnl = self.calculate_pnl(symbol, price)
             
-            # Check if effective liquidation happened right now
-            if pos['margin'] + pnl <= 0:
-                console.print("[red]Position effectively liquidated just now.[/red]")
-                return_val = 0
-                pnl = -pos['margin']
-            else:
-                return_val = pos['margin'] + pnl
-            
-            # Close fee
-            notional = pos['size'] * price
-            fee = notional * TAKER_FEE
-            
-            final_payout = return_val - fee
-            self.balance += final_payout
-            
-            console.print(f"[green]Closed {symbol}. PnL: {pnl:.2f}. Fee: {fee:.2f}. Returned: {final_payout:.2f}[/green]")
-            
-            self.log_history("CLOSE", symbol, pos['size'], price, pos['leverage'], pos['margin'], pnl, fee)
-            del self.positions[symbol]
-
-        self.save_state()
-
-    def save_state(self):
-        data = {
-            'balance': self.balance,
-            'positions': self.positions
-        }
-        with open(SAVE_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
-
-    def load_state(self):
-        if os.path.exists(SAVE_FILE):
-            with open(SAVE_FILE, 'r') as f:
-                data = json.load(f)
-                self.balance = data.get('balance', INITIAL_BALANCE)
-                self.positions = data.get('positions', {})
+            # Check    # Remove check_liquidations method from Player as it's done in update_portfolio
+    # But for display_status we need similar batch logic, or just rely on passing prices.
 
 def display_status(player, exchange):
-    # Just render the table, logic handled in update_portfolio
+    # Collect feed symbols
+    feed_map = {} 
+    for s, pos in player.positions.items():
+        feed_sym = pos.get('feed_symbol', s)
+        feed_map[feed_sym] = s
+        
+    # Batch fetch
+    with console.status("[cyan]Fetching prices...[/cyan]"):
+        prices = exchange.get_prices(list(feed_map.keys()))
+
     table = Table(title=f"Portfolio (Bal: {player.balance:.2f} USDT)")
     table.add_column("Symbol")
     table.add_column("Side")
@@ -245,21 +237,22 @@ def display_status(player, exchange):
     
     current_equity = player.balance
     
-    for symbol, pos in player.positions.items():
-        price = exchange.get_price(symbol)
+    for feed_sym, user_sym in feed_map.items():
+        pos = player.positions[user_sym]
+        price = prices.get(feed_sym)
+        
         if not price:
-            current_equity += pos['margin'] # Assume unchanged if no data
+            current_equity += pos['margin']
             continue
             
-        pnl = player.calculate_pnl(symbol, price)
-        # Check consistency (should be handled by update loop but for display)
+        pnl = player.calculate_pnl_raw(pos, price)
         current_equity += (pos['margin'] + pnl)
         
         roe = (pnl / pos['margin']) * 100
         color = "green" if pnl >= 0 else "red"
         
         table.add_row(
-            symbol,
+            user_sym,
             f"{pos['type'].upper()} {pos['leverage']}x",
             f"{pos['margin']:.2f}",
             f"{pos['entry_price']:.2f}",
@@ -317,14 +310,13 @@ def main():
     exchange = PaperExchange()
 
     while True:
-        # GLOBAL UPDATE START
+        # GLOBAL UPDATE
         with console.status("[cyan]Updating markets...[/cyan]", spinner="dots"):
              equity = player.update_portfolio(exchange)
              
         if equity < MIN_EQUITY_GAME_OVER:
             console.print(Panel(f"[bold red]GAME OVER[/bold red]\n\nYour equity ({equity:.2f} USDT) has dropped below 5 USDT.\n\nUse --new to restart."))
             sys.exit(0)
-        # GLOBAL UPDATE END
 
         try:
             cmd = Prompt.ask(f"\n[cyan]Command ({equity:.0f} Eq)[/cyan]").strip().lower()
@@ -349,12 +341,19 @@ def main():
                 symbol = parts[1].upper()
                 if '/' not in symbol: symbol += "/USDT"
                 
-                # Fetch fresh price for execution
+                # Fetch fresh price
                 with console.status("Fetching price..."):
-                    price = exchange.get_price(symbol)
+                    # Use resolve logic if possible, or simple get_price for now (legacy method in class)
+                    # Use get_prices for batch?
+                    # Let's use the robust resolve we added
+                    feed_sym, price = exchange.resolve_symbol_and_price(symbol)
                 
                 if price:
+                    # We pass feed_sym? Close checks position keys anyway. 
+                    # If position key matches user symbol, we are good.
                     player.execute_trade(symbol, 'close', 0, 0, price)
+                else: 
+                     console.print("[red]Price fetch failed or symbol invalid.[/red]")
                     
             elif action in ['long', 'short']:
                 if len(parts) < 4:
@@ -367,10 +366,12 @@ def main():
                     lev = int(parts[3])
                     
                     with console.status("Fetching price..."):
-                        price = exchange.get_price(symbol)
+                        feed_sym, price = exchange.resolve_symbol_and_price(symbol)
                     
                     if price:
-                        player.execute_trade(symbol, action, margin, lev, price)
+                        player.execute_trade(symbol, action, margin, lev, price, feed_symbol=feed_sym)
+                    else:
+                        console.print("[red]Symbol not found or Error.[/red]")
                 except ValueError:
                     console.print("[red]Invalid numbers[/red]")
                     
