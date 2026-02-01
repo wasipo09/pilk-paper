@@ -322,7 +322,7 @@ def main():
              equity = player.update_portfolio(exchange)
              
         if equity < MIN_EQUITY_GAME_OVER:
-            console.print(Panel(f"[bold red]GAME OVER[/bold red]\n\nYour equity ({equity:.2f} USDT) has dropped below 5 USDT.\n\nUse --start to start a new game."))
+            console.print(Panel(f"[bold red]GAME OVER[/bold red]\n\nYour equity ({equity:.2f} USDT) has dropped below 5 USDT.\n\nUse --new to restart."))
             sys.exit(0)
         # GLOBAL UPDATE END
 
