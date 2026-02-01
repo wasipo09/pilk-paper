@@ -91,5 +91,67 @@ class TestPaperTrader(unittest.TestCase):
         self.assertEqual(equity, 4.0)
         self.assertTrue(equity < paper_trader.MIN_EQUITY_GAME_OVER)
 
+    def test_tp_trigger(self):
+        # Long BTC at 50000. TP 51000.
+        price = 50000.0
+        self.player.execute_trade("BTC/USDT", "long", 100, 10, price, tp=51000.0)
+        
+        # Move price to 51001 (trigger TP)
+        self.exchange.get_prices.return_value = {"BTC/USDT": 51001.0}
+        
+        current_bal = self.player.balance # Balance after entry (fee ded.)
+        
+        self.player.update_portfolio(self.exchange)
+        
+        # Position should be gone
+        self.assertNotIn("BTC/USDT", self.player.positions)
+        
+        # Balance should be higher than at start (profit)
+        # 100 margin + profit. Profit approx (1001 diff * 0.02 size) - close fee
+        self.assertTrue(self.player.balance > current_bal + 100)
+
+        # Check history
+        with open(self.history_file, 'r') as f:
+            self.assertIn("TAKE_PROFIT", f.read())
+
+    def test_sl_trigger(self):
+        # Long at 50000. SL 49000.
+        price = 50000.0
+        self.player.execute_trade("ETH/USDT", "long", 100, 10, price, sl=49000.0)
+        
+        # Move price to 48999
+        self.exchange.get_prices.return_value = {"ETH/USDT": 48999.0}
+        
+        self.player.update_portfolio(self.exchange)
+        
+        self.assertNotIn("ETH/USDT", self.player.positions)
+        
+        with open(self.history_file, 'r') as f:
+            self.assertIn("STOP_LOSS", f.read())
+
+    def test_limit_order(self):
+        # Place limit long BTC at 40000. Curr price is 50000.
+        self.player.place_limit_order("BTC/USDT", "long", 40000.0, 100, 10)
+        
+        self.assertEqual(len(self.player.orders), 1)
+        
+        # Update with price 45000 (No trigger)
+        self.exchange.get_prices.return_value = {"BTC/USDT": 45000.0}
+        self.player.update_portfolio(self.exchange)
+        self.assertEqual(len(self.player.orders), 1)
+        self.assertEqual(len(self.player.positions), 0)
+        
+        # Update with price 39000 (Trigger Long)
+        self.exchange.get_prices.return_value = {"BTC/USDT": 39000.0}
+        self.player.update_portfolio(self.exchange)
+        
+        self.assertEqual(len(self.player.orders), 0)
+        self.assertEqual(len(self.player.positions), 1)
+        self.assertIn("BTC/USDT", self.player.positions)
+        
+        # Verify entry price is execution price (39000), not limit price?
+        # Yes, we set it to fill at current price which is better.
+        self.assertEqual(self.player.positions["BTC/USDT"]['entry_price'], 39000.0)
+
 if __name__ == '__main__':
     unittest.main()
