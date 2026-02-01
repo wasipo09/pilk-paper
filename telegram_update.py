@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Telegram Trading Update Bot for Pilk Paper Trader
-Pushes periodic updates to Telegram
+Pushes periodic updates to Telegram (plain text)
 """
 import sys
 import json
@@ -20,7 +20,7 @@ def get_equity():
     try:
         # Run the paper trader with status command
         result = subprocess.run(
-            ['python3', 'paper_trader.py'],
+            ['venv/bin/python', 'paper_trader.py'],
             cwd=PAPER_TRADER_DIR,
             capture_output=True,
             text=True,
@@ -42,14 +42,13 @@ def get_equity():
         return f"Error fetching equity: {str(e)}"
 
 def send_telegram_message(text):
-    """Send a message to Telegram"""
+    """Send a message to Telegram (plain text)"""
     import requests
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     data = {
         "chat_id": CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML"
+        "text": text
     }
 
     try:
@@ -65,10 +64,10 @@ def main():
     # Get equity
     equity_info = get_equity()
 
-    # Build message
-    message = f"""<b>📈 Pilk Paper Trader Update</b>
+    # Build message (plain text)
+    message = f"""Pilk Paper Trader Update
 
-<b>Time:</b> {now}
+Time: {now}
 {equity_info}
 
 ---

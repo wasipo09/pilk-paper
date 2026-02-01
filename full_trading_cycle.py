@@ -7,6 +7,9 @@ import subprocess
 import sys
 
 # Run autonomous analysis
+print("=" * 60)
+print("Pilk Autonomous Trading Analysis")
+print("=" * 60)
 proc = subprocess.run(
     ['venv/bin/python', 'autonomous_trader.py'],
     cwd='/home/ubuntu/.openclaw/workspace/pilk-paper',
@@ -21,6 +24,7 @@ if proc.stderr:
     print("Errors:", proc.stderr)
 
 # Update Telegram
+print("\nUpdating Telegram...")
 telegram_proc = subprocess.run(
     ['python3', 'telegram_update.py'],
     cwd='/home/ubuntu/.openclaw/workspace/pilk-paper',
@@ -33,3 +37,5 @@ telegram_proc = subprocess.run(
 print(telegram_proc.stdout)
 if telegram_proc.stderr:
     print("Telegram errors:", telegram_proc.stderr)
+
+print("\nComplete. Check logs at: /tmp/pilk_trading_cycle.log")
