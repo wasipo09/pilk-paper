@@ -2,6 +2,8 @@ import ccxt
 import json
 import os
 import time
+import argparse
+import sys
 from datetime import datetime
 from rich.console import Console
 from rich.table import Table
@@ -13,7 +15,7 @@ from rich.live import Live
 console = Console()
 
 # Configuration
-INITIAL_BALANCE = 10000.0  # USDT
+INITIAL_BALANCE = 1000.0  # USDT
 TAKER_FEE = 0.0005  # 0.05%
 MAKER_FEE = 0.0002  # 0.02%
 SAVE_FILE = "trade_log.json"
@@ -21,26 +23,44 @@ SAVE_FILE = "trade_log.json"
 class PaperExchange:
     def __init__(self):
         self.exchange = ccxt.binanceusdm()
-        # Load markets to get precision and limits
         try:
             self.exchange.load_markets()
         except Exception as e:
             console.print(f"[red]Error connecting to Binance Futures: {e}[/red]")
 
     def get_price(self, symbol):
-        try:
-            ticker = self.exchange.fetch_ticker(symbol)
-            return ticker['last']
-        except Exception as e:
-            console.print(f"[red]Error fetching price for {symbol}: {e}[/red]")
-            return None
+        # Try exact match first
+        if symbol in self.exchange.markets:
+            try:
+                ticker = self.exchange.fetch_ticker(symbol)
+                return ticker['last']
+            except Exception as e:
+                console.print(f"[red]Error fetching price for {symbol}: {e}[/red]")
+                return None
+        
+        # Try appending :USDT for linear futures
+        alt_symbol = f"{symbol}:USDT"
+        if alt_symbol in self.exchange.markets:
+            try:
+                ticker = self.exchange.fetch_ticker(alt_symbol)
+                return ticker['last']
+            except Exception as e:
+                console.print(f"[red]Error fetching price for {alt_symbol}: {e}[/red]")
+                return None
+        
+        console.print(f"[red]Symbol {symbol} (or {alt_symbol}) not found in markets.[/red]")
+        return None
 
 class Player:
-    def __init__(self):
+    def __init__(self, reset=False):
         self.balance = INITIAL_BALANCE
-        self.positions = {}  # symbol -> {size, entry_price, type: 'long'/'short'}
+        self.positions = {}
         self.history = []
-        self.load_state()
+        if not reset:
+            self.load_state()
+        else:
+            self.save_state()
+            console.print(f"[green]New game started! Balance reset to {INITIAL_BALANCE} USDT.[/green]")
 
     def get_portfolio_value(self, current_prices):
         total_pnl = 0
@@ -48,8 +68,31 @@ class Player:
             price = current_prices.get(symbol)
             if price:
                 pnl = self.calculate_pnl(symbol, price)
-                total_pnl += pnl
-        return self.balance + total_pnl
+                # Check liquidation
+                if pos['margin'] + pnl <= 0:
+                     # Simulate liquidation value (0 margin left)
+                     total_pnl -= pos['margin']
+                else:
+                     total_pnl += pnl
+        # In isolated margin, your balance is separate from margin.
+        # Equity = Wallet Balance + Sum(Margin + PnL)
+        # But wait, Margin is ALREADY deducted from Balance when opening.
+        # So Equity = Wallet Balance + Sum(Margin + Unreleased PnL)
+        
+        margin_equity = 0
+        for symbol, pos in self.positions.items():
+            price = current_prices.get(symbol)
+            pnl = 0
+            if price:
+                 pnl = self.calculate_pnl(symbol, price)
+            
+            # If liquidated, equity for this pos is 0
+            if pos['margin'] + pnl <= 0:
+                margin_equity += 0
+            else:
+                margin_equity += (pos['margin'] + pnl)
+
+        return self.balance + margin_equity
 
     def calculate_pnl(self, symbol, current_price):
         pos = self.positions.get(symbol)
@@ -66,98 +109,133 @@ class Player:
             
         return pnl
 
-    def execute_trade(self, symbol, side, amount_usdt, price, order_type='market'):
-        # Fee calculation
-        fee_rate = TAKER_FEE if order_type == 'market' else MAKER_FEE
-        size = amount_usdt / price
-        trade_value = size * price
-        fee = trade_value * fee_rate
-        
-        # Verify balance for opening
-        # Simplified margin check: assumes 1x leverage is affordable logic for 'balance'.
-        # In futures, it's margin balance, but for this game we'll just check "Available Balance" roughly.
-        # Closing positions credits PnL back to balance.
-        
-        # This is a simplified "netting" logic. 
-        # If we have a position and trade same side -> Increase size (Avg Entry)
-        # If we have a position and trade opposite side -> Reduce/Close (Realize Pnk)
-        
-        existing = self.positions.get(symbol)
-        
-        if existing:
-            if existing['type'] == (side if side in ['long', 'short'] else ('long' if side == 'buy' else 'short')):
-                 # Adding to position
-                 # Logic for "Buy" on "Long" or "Sell" on "Short"
-                 # Just treat 'buy' as long entry/cover short, 'sell' as short entry/close long? 
-                 # Let's use strict: 'long' opens/adds long, 'short' opens/adds short.
-                 # 'close' closes.
-                 pass
-            else:
-                # Opposing logic is complex for simple script. 
-                # Let's enforce: No hedging locally (One direction per symbol).
-                pass
-
-        # Let's stick to simple "Buy/Sell" (Long/Short) commands from user
-        # User says: "long BTC/USDT 1000" -> Opens Long 1000 USDT worth
-        # User says: "short BTC/USDT 1000" -> Opens Short 1000 USDT worth
-        # User says: "close BTC/USDT" -> Closes entire position
-        
-        # 1. Deduct Fee
-        self.balance -= fee
-        
-        if side == 'close':
-            if not existing:
-                console.print(f"[red]No position to close for {symbol}[/red]")
+    def execute_trade(self, symbol, side, margin_usdt, leverage, price):
+        # Validation
+        if side in ['long', 'short']:
+            if not (1 <= leverage <= 50):
+                console.print("[red]Leverage must be between 1x and 50x[/red]")
                 return
             
-            # Realize PnL
-            pnl = self.calculate_pnl(symbol, price)
-            self.balance += pnl
+            if margin_usdt > self.balance:
+                console.print(f"[red]Insufficient balance. Available: {self.balance:.2f} USDT[/red]")
+                return
+
+            if symbol in self.positions:
+                console.print(f"[red]You already have a position in {symbol}. Averaging/Adding is not supported in this version. Close it first.[/red]")
+                return
+
+            # Open Position
+            notional_value = margin_usdt * leverage
+            size = notional_value / price
             
-            # Log
+            # Taker Fee on Notional
+            fee = notional_value * TAKER_FEE
+            
+            # Deduct Margin and Fee from Balance
+            total_cost = margin_usdt + fee
+            if total_cost > self.balance:
+                 console.print(f"[red]Insufficient balance for Margin + Fee ({total_cost:.2f} USDT)[/red]")
+                 return
+                 
+            self.balance -= total_cost
+            
+            # Estimated Liquidation Price
+            # Long: Entry * (1 - 1/Lev) roughly? 
+            # Exact: Bankruptcy Price => Entry - (Margin / Size) for Long
+            #        Entry + (Margin / Size) for Short
+            # (ignoring maintenance margin for simplicity, liq at bankruptcy)
+            
+            if side == 'long':
+                liq_price = price - (margin_usdt / size)
+            else:
+                liq_price = price + (margin_usdt / size)
+
+            self.positions[symbol] = {
+                'type': side,
+                'margin': margin_usdt,
+                'leverage': leverage,
+                'size': size,
+                'entry_price': price,
+                'liq_price': liq_price,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            console.print(f"[green]Opened {leverage}x {side} on {symbol}. Margin: {margin_usdt}, Size: {size:.4f}, Liq: {liq_price:.2f}[/green]")
+            console.print(f"[dim]Fee deducted: {fee:.2f} USDT[/dim]")
+            
+            self.history.append({
+                'time': datetime.now().isoformat(),
+                'symbol': symbol,
+                'action': f"OPEN {side.upper()} {leverage}x",
+                'margin': margin_usdt,
+                'price': price,
+                'fee': fee
+            })
+
+        elif side == 'close':
+            pos = self.positions.get(symbol)
+            if not pos:
+                console.print(f"[red]No position in {symbol}[/red]")
+                return
+            
+            # Check if liquidated before closing?
+            # Ideally done in status check, but let's calculate final value here
+            pnl = self.calculate_pnl(symbol, price)
+            
+            # Liquidation check
+            if pos['margin'] + pnl <= 0:
+                console.print(f"[red]Position is LIQUIDATED! Loss: {pos['margin']:.2f} USDT[/red]")
+                pnl = -pos['margin'] # Cap loss at margin
+                return_amount = 0
+            else:
+                return_amount = pos['margin'] + pnl
+            
+            # Closing Fee (Taker)
+            notional_value = pos['size'] * price
+            close_fee = notional_value * TAKER_FEE
+            
+            final_payout = return_amount - close_fee
+            
+            self.balance += final_payout
+            del self.positions[symbol]
+            
+            console.print(f"[green]Closed {symbol}. PnL: {pnl:.2f} USDT. Fee: {close_fee:.2f}. Returned: {final_payout:.2f}[/green]")
+            
             self.history.append({
                 'time': datetime.now().isoformat(),
                 'symbol': symbol,
                 'action': 'CLOSE',
-                'size': existing['size'],
                 'price': price,
                 'pnl': pnl,
-                'fee': fee
-            })
-            del self.positions[symbol]
-            console.print(f"[green]Closed {symbol}. PnL: {pnl:.2f} USDT. Fee: {fee:.2f} USDT[/green]")
-            
-        elif side in ['long', 'short']:
-            # New Position or Add
-            if existing:
-                if existing['type'] != side:
-                    console.print(f"[red]Cannot open {side} on {symbol}, you have a {existing['type']} position. Close it first.[/red]")
-                    return
-                # Averaging down/up
-                total_size = existing['size'] + size
-                avg_price = ((existing['size'] * existing['entry_price']) + (size * price)) / total_size
-                existing['size'] = total_size
-                existing['entry_price'] = avg_price
-                console.print(f"[yellow]Added to {symbol} {side}. New Entry: {avg_price:.2f}[/yellow]")
-            else:
-                self.positions[symbol] = {
-                    'type': side,
-                    'size': size,
-                    'entry_price': price,
-                    'timestamp': datetime.now().isoformat()
-                }
-                console.print(f"[green]Opened {side} on {symbol} for {amount_usdt} USDT @ {price}[/green]")
-            
-            self.history.append({
-                'time': datetime.now().isoformat(),
-                'symbol': symbol,
-                'action': side.upper(),
-                'size': size,
-                'price': price,
-                'fee': fee
+                'fee': close_fee
             })
 
         self.save_state()
+
+    def check_liquidations(self, exchange):
+        # Helper to check passive liquidations
+        to_remove = []
+        for symbol, pos in self.positions.items():
+            price = exchange.get_price(symbol)
+            if not price: continue
+            
+            pnl = self.calculate_pnl(symbol, price)
+            if pos['margin'] + pnl <= 0:
+                console.print(f"[bold red]LIQUIDATION ALERT: {symbol} position wiped out![/bold red]")
+                to_remove.append(symbol)
+                
+                self.history.append({
+                    'time': datetime.now().isoformat(),
+                    'symbol': symbol,
+                    'action': 'LIQUIDATION',
+                    'price': price,
+                    'pnl': -pos['margin'],
+                    'fee': 0
+                })
+        
+        for s in to_remove:
+            del self.positions[s]
+            self.save_state()
 
     def save_state(self):
         data = {
@@ -177,12 +255,15 @@ class Player:
                 self.history = data.get('history', [])
 
 def display_dashboard(player, exchange):
-    table = Table(title="Current Portfolio")
+    player.check_liquidations(exchange)
+    
+    table = Table(title=f"Current Portfolio - Balance: {player.balance:.2f} USDT")
     table.add_column("Symbol", style="cyan")
-    table.add_column("Type", style="magenta")
-    table.add_column("Size", justify="right")
-    table.add_column("Entry Price", justify="right")
-    table.add_column("Mark Price", justify="right")
+    table.add_column("Side/Lev", style="magenta")
+    table.add_column("Margin", justify="right")
+    table.add_column("Entry", justify="right")
+    table.add_column("Mark", justify="right")
+    table.add_column("Liq Price", style="red", justify="right")
     table.add_column("PnL (USDT)", justify="right")
     table.add_column("ROE %", justify="right")
 
@@ -195,47 +276,42 @@ def display_dashboard(player, exchange):
         current_prices[symbol] = price
         
         pnl = player.calculate_pnl(symbol, price)
-        entry_val = pos['size'] * pos['entry_price']
-        roe = (pnl / entry_val) * 100 if entry_val > 0 else 0
+        roe = (pnl / pos['margin']) * 100
         
         pnl_color = "green" if pnl >= 0 else "red"
         
         table.add_row(
             symbol,
-            pos['type'].upper(),
-            f"{pos['size']:.4f}",
+            f"{pos['type'].upper()} {pos['leverage']}x",
+            f"{pos['margin']:.2f}",
             f"{pos['entry_price']:.2f}",
             f"{price:.2f}",
+            f"{pos['liq_price']:.2f}",
             f"[{pnl_color}]{pnl:.2f}[/{pnl_color}]",
             f"[{pnl_color}]{roe:.2f}%[/{pnl_color}]"
         )
 
-    # Summary
     console.print(table)
-    
-    # Calculate Total Portfolio Value
-    portfolio_value = player.get_portfolio_value(current_prices)
-    
-    summary = Table.grid()
-    summary.add_column()
-    summary.add_column(justify="right")
-    summary.add_row("Cash Balance:", f"{player.balance:.2f} USDT")
-    summary.add_row("Equity:", f"{portfolio_value:.2f} USDT")
-    
-    pnl_total = portfolio_value - INITIAL_BALANCE
-    color = "green" if pnl_total >= 0 else "red"
-    summary.add_row("Total PnL:", f"[{color}]{pnl_total:.2f} USDT[/{color}]")
-    
-    console.print(Panel(summary, title="Account Summary"))
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--new', action='store_true', help='Start a new game with reset portfolio')
+    args = parser.parse_args()
+
     console.print("[bold yellow]Welcome to Pilk Paper Trader (Binance Futures)[/bold yellow]")
-    player = Player()
+    
+    if args.new:
+        if os.path.exists(SAVE_FILE):
+            os.rename(SAVE_FILE, f"{SAVE_FILE}.bak")
+        player = Player(reset=True)
+    else:
+        player = Player(reset=False)
+        
     exchange = PaperExchange()
 
     while True:
         try:
-            command = Prompt.ask("\n[bold cyan]Command (long/short/close/status/history/quit)[/bold cyan]").strip().lower()
+            command = Prompt.ask("\n[bold cyan]Command[/bold cyan]").strip().lower()
             
             if command in ['quit', 'exit']:
                 break
@@ -246,56 +322,45 @@ def main():
                 continue
                 
             if command == 'history':
-                table = Table(title="Trade History")
-                table.add_column("Time", style="dim")
-                table.add_column("Symbol")
-                table.add_column("Action")
-                table.add_column("Price")
-                table.add_column("PnL")
-                table.add_column("Fee")
-                
-                for trade in player.history:
-                    pnl_str = f"{trade.get('pnl', 0):.2f}"
-                    if trade.get('pnl', 0) > 0: pnl_str = f"[green]{pnl_str}[/green]"
-                    elif trade.get('pnl', 0) < 0: pnl_str = f"[red]{pnl_str}[/red]"
-                    
-                    table.add_row(
-                        trade['time'].split('T')[1][:8], # Time only
-                        trade['symbol'],
-                        trade['action'],
-                        f"{trade['price']:.2f}",
-                        pnl_str if 'pnl' in trade else "-",
-                        f"{trade['fee']:.4f}"
-                    )
-                console.print(table)
+                # Quick history dump
+                for h in player.history[-10:]:
+                    console.print(h)
                 continue
 
             parts = command.split()
-            if len(parts) < 2:
-                console.print("[red]Invalid command format.[/red]")
-                continue
+            if not parts: continue
             
             action = parts[0]
-            # normalize symbol
-            symbol = parts[1].upper()
-            if '/' not in symbol:
-                symbol += "/USDT" # default assumption
-                
+            
             if action == 'close':
+                if len(parts) < 2:
+                    console.print("[red]Usage: close <symbol>[/red]")
+                    continue
+                symbol = parts[1].upper()
+                # Symbol Correction
+                if '/' not in symbol: symbol += "/USDT"
+                
                 price = exchange.get_price(symbol)
                 if price:
-                    player.execute_trade(symbol, 'close', 0, price)
+                    player.execute_trade(symbol, 'close', 0, 0, price)
+                    
             elif action in ['long', 'short']:
-                if len(parts) < 3:
-                     console.print(f"[red]Usage: {action} <symbol> <USDT_Amount>[/red]")
+                if len(parts) < 4:
+                     console.print(f"[red]Usage: {action} <symbol> <Margin_USDT> <Leverage>[/red]")
+                     console.print("[dim]Example: long BTC/USDT 100 20 (Uses 100 USDT margin @ 20x)[/dim]")
                      continue
                 try:
-                    amount = float(parts[2])
+                    symbol = parts[1].upper()
+                    if '/' not in symbol: symbol += "/USDT"
+                    
+                    margin = float(parts[2])
+                    leverage = int(parts[3])
+                    
                     price = exchange.get_price(symbol)
                     if price:
-                        player.execute_trade(symbol, action, amount, price)
+                        player.execute_trade(symbol, action, margin, leverage, price)
                 except ValueError:
-                    console.print("[red]Invalid amount[/red]")
+                    console.print("[red]Invalid numbers[/red]")
 
         except KeyboardInterrupt:
             console.print("\n[yellow]Exiting...[/yellow]")

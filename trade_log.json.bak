@@ -1,0 +1,21 @@
+{
+  "balance": 9999.75,
+  "positions": {
+    "BTC/USDT": {
+      "type": "long",
+      "size": 0.006348343780591082,
+      "entry_price": 78760.7,
+      "timestamp": "2026-01-31T21:20:15.713360"
+    }
+  },
+  "history": [
+    {
+      "time": "2026-01-31T21:20:15.714341",
+      "symbol": "BTC/USDT",
+      "action": "LONG",
+      "size": 0.006348343780591082,
+      "price": 78760.7,
+      "fee": 0.25
+    }
+  ]
+}
