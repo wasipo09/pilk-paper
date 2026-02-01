@@ -1,109 +1,116 @@
-# Pilk Paper Trader Manual 📈
+# Pilk Paper Trader
 
-Welcome to the **Pilk Paper Trader**, a professional-grade cryptocurrency futures simulator running in your CLI. Test your strategies with **Isolated Margin**, **Leverage** (1x-50x), and real-time **Binance Futures** market data—risk-free.
+A realistic command-line interface (CLI) game for paper trading cryptocurrency futures on Binance (USDT-M).
 
----
+Test your trading strategies, practice risk management, and experience the thrill of leverage without risking real money.
 
-## 🚀 Quick Start
+## Features
 
-1. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+- **Real-Time Data**: Fetches live market prices from Binance Futures via `ccxt`.
+- **Realistic Simulation**:
+    - **Isolated Margin**: Manage risk per position.
+    - **Leverage (1x-50x)**: Amplify gains (and losses).
+    - **Fees**: Simulate real exchange fees (0.05% Taker).
+    - **Liquidation**: Positions are automatically wiped out if margin is depleted.
+- **Advanced Order Types**:
+    - **Limit Orders**: Place orders that trigger at specific prices.
+    - **Take Profit (TP) & Stop Loss (SL)**: Automate your exits.
+- **Persistent State**: Your balance, positions, and orders are saved automatically.
+- **Performance Tracking**: Detailed transaction history (`history.csv`) and PnL analysis.
 
-2. **Start a New Game** (Resets balance to $1,000):
-   ```bash
-   python paper_trader.py --new
-   ```
+## Installation
 
-3. **Continue Playing**:
-   ```bash
-   python paper_trader.py
-   ```
+1.  **Clone the repository**:
+    ```bash
+    git clone https://github.com/rentamac/pilk-paper.git
+    cd pilk-paper
+    ```
 
----
+2.  **Install dependencies**:
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-## 🎮 Game Rules
+## How to Play
 
-### The Goal
-You start with **$1,000 USDT**. Your goal is to grow this capital.
-- **Game Over**: If your Total Equity drops below **$5.00**, you are bankrupt.
-- **Winning**: There is no cap. How high can you go?
+Start the game by running:
 
-### Trading Mechanics (Important!)
-This game simulates **Isolated Margin** futures trading.
+```bash
+python paper_trader.py
+```
 
-1.  **Margin**: The specific amount of USDT you put up as collateral for a trade.
-2.  **Leverage**: Multiplies your buying power (1x to 50x).
-3.  **Liquidation**:
-    - If your position's **Unrealized Loss** equals or exceeds your **Margin**, you are **LIQUIDATED**.
-    - You lose 100% of the margin allocated to that trade.
-    - Your remaining account balance is safe (Isolated Margin).
+- You start with **1000 USDT**.
+- If your equity drops below **5 USDT**, it's GAME OVER.
+- Use `--new` to restart with a fresh balance:
+    ```bash
+    python paper_trader.py --new
+    ```
 
-> **Example**:
-> You open `long BTC/USDT 100 20`.
-> - Margin: $100
-> - Leverage: 20x
-> - Position Size: $2,000
->
-> If BTC price drops **5%**, your position loses 5% of $2,000 = $100.
-> **Result**: You are liquidated. Your $100 is gone.
+### Command Reference
+
+| Command | Alias | Description | Usage |
+| :--- | :--- | :--- | :--- |
+| `long` | `b`, `buy` | Open a Long position | `b <symbol> <margin> <leverage> [--tp price] [--sl price]` |
+| `short` | `s`, `sell` | Open a Short position | `s <symbol> <margin> <leverage> [--tp price] [--sl price]` |
+| `close` | `c` | Close a position | `c <symbol>` |
+| `limit` | - | Place a Limit Order | `limit <long/short> <symbol> <price> <margin> <leverage>` |
+| `status` | `st` | View portfolio & prices | `st` |
+| `history` | `h` | View last 15 trades | `h` |
+| `quit` | `exit` | Save and exit | `quit` |
+
+### Examples
+
+**1. Open a Long Position (Buy)**
+Bet 100 USDT on BTC with 10x leverage.
+```bash
+> b BTC 100 10
+```
+
+**2. Open with Take Profit & Stop Loss**
+Long ETH with 50 USDT at 20x. Take profit at 4000, Stop loss at 3000.
+```bash
+> b ETH 50 20 --tp 4000 --sl 3000
+```
+
+**3. Place a Limit Order**
+Set a Limit Buy (Long) for SOL if price drops to 80.
+```bash
+> limit long SOL 80 50 5
+```
+*The position will automatically open when the price crosses your limit.*
+
+**4. Close a Position**
+Market close your BTC position.
+```bash
+> c BTC
+```
+
+**5. Check Status**
+See your current PnL, open positions, and orders.
+```bash
+> st
+```
+
+## Game Mechanics
+
+### Margin & Leverage
+- **Margin**: The amount of your own cash you lock into a trade.
+- **Leverage**: Multiplies your buying power. 100 USDT margin at 10x leverage = 1000 USDT position size.
+- **Risk**: Higher leverage means the price needs to move less against you to cause liquidation.
 
 ### Fees
-Fees are realistic and deducted from your **Available Balance** (not margin) immediately.
-- **Taker Fee**: 0.05% of the total position size (Notional Value).
-- *Tip: High leverage = High position size = High fees!*
+- **Taker Fee**: 0.05% of the *total position size* (Not just margin).
+- Example: 100 Margin x 10 Leverage = 1000 Size. Fee = 1000 * 0.0005 = 0.50 USDT.
 
----
+### Liquidation
+- If your PnL drops roughly equal to your Margin, the position is **Liquidated**.
+- You lose the entire margin amount for that trade.
+- **Simulated Mechanic**: We check `Margin + PnL <= 0`. If true, the position is removed and margin is lost.
 
-## 🕹 Command Reference
+### Take Profit / Stop Loss
+- Checks are performed every time the portfolio updates (every command loop).
+- If the current market price crosses your trigger, the mechanism executes a market close immediately.
 
-### `status`
-View your live portfolio dashboard.
-- **Symbol**: Asset name.
-- **Side/Lev**: Long/Short and Leverage.
-- **Margin**: Collateral locked.
-- **Liq Price**: **CRITICAL**. If price hits this, you lose the position.
-- **PnL**: Profit or Loss in USDT.
-- **ROE%**: Return on Equity (Profit / Margin).
-
-### `long <SYMBOL> <MARGIN> <LEVERAGE>`
-Open a position profiting from price increases.
-- **Usage**: `long BTC 100 10`
-- *Meaning*: Bet on Bitcoin using $100 collateral at 10x leverage.
-
-### `short <SYMBOL> <MARGIN> <LEVERAGE>`
-Open a position profiting from price drops.
-- **Usage**: `short ETH 50 5`
-- *Meaning*: Bet against Ethereum using $50 collateral at 5x leverage.
-
-### `close <SYMBOL>`
-Close an open position at market price and realize PnL.
-- **Usage**: `close BTC`
-- *Note*: You can only close the entire position in this version.
-
-### `history`
-View a log of your last 15 actions (Opens, Closes, Liquidations).
-- Full history is saved to `history.csv`.
-
-### `quit` or `exit`
-Save and Close the game.
-
----
-
-## 🧩 Advanced Details
-
-- **Global Refresh**: Every time you enter a command, the game fetches fresh prices for **ALL** your positions in real-time. If a price spike occurred while you were thinking, you might instantly see a liquidation message.
-- **Symbol Resolution**: You can type `BTC/USDT`, `BTC`, or `BTC/USDT:USDT`. The game is smart enough to find the correct futures ticker on Binance.
-- **Files**:
-  - `trade_log.json`: Stores your active session state.
-  - `history.csv`: A permanent record of every trade you've ever made.
-
----
-
-## ⚠️ Troubleshooting
-
-- **"Symbol not found"**: Ensure you are trading a valid USDT-M Future pair (e.g., `BTC/USDT`, `ETH/USDT`, `DOGE/USDT`).
-- **Network Errors**: The game relies on the public Binance API. Rate limits or connection issues may cause occasional delays. Just try again.
-
-Good luck! 🌕 magnitude
+## Data & Strategy
+- Prices are live from Binance Futures.
+- Use `history.csv` to analyze your trading performance in Excel/Sheets.
