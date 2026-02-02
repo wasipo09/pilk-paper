@@ -1,0 +1,177 @@
+:root {
+  --color-bg: #2b1d3d; /* Deep Purple */
+  --color-card-bg: #f0f0f0;
+  --color-primary: #ff4d4d; /* Red */
+  --color-secondary: #4dff4d; /* Green */
+  --color-accent: #4d4dff; /* Blue */
+  --color-text: #1a1a1a;
+  --font-main: "Jersey 10", sans-serif;
+  --scanline-color: rgba(0, 0, 0, 0.5);
+  --crt-curve: 3px;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-main);
+  overflow: hidden; /* For CRT overlay */
+  height: 100vh;
+  width: 100vw;
+}
+
+#root {
+  height: 100%;
+  width: 100%;
+  position: relative;
+}
+
+/* CRT Overlay Effect */
+.crt-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9999;
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%,
+    rgba(0, 0, 0, 0.25) 50%
+  );
+  background-size: 100% 4px;
+  animation: scanlines 0.2s linear infinite;
+}
+
+.crt-overlay::before {
+  content: " ";
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  background: radial-gradient(circle, rgba(0,0,0,0) 50%, rgba(0,0,0,0.6) 100%);
+  z-index: 2;
+}
+
+/* Flicker Animation */
+@keyframes scanlines {
+  0% { transform: translateY(0px); }
+  100% { transform: translateY(4px); }
+}
+
+/* Component Styles */
+.game-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 20px;
+  box-sizing: border-box;
+  background: radial-gradient(circle at center, #3d2b56 0%, #1a1025 100%);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  border-bottom: 4px solid white;
+  padding-bottom: 1rem;
+}
+
+.header h1 {
+  font-size: 3rem;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: #fff;
+  text-shadow: 4px 4px 0px #000;
+  margin: 0;
+}
+
+.stats-bar {
+  display: flex;
+  gap: 2rem;
+  font-size: 1.5rem;
+  color: white;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 20px;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+.card {
+  background: var(--color-card-bg);
+  border: 4px solid #000;
+  border-radius: 8px;
+  padding: 10px;
+  box-shadow: 8px 8px 0px rgba(0,0,0,0.5);
+  transition: transform 0.1s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.card:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 10px 10px 0px rgba(0,0,0,0.5);
+}
+
+.card h3 {
+  font-size: 2rem;
+  margin: 0;
+  border-bottom: 2px solid #000;
+  width: 100%;
+  text-align: center;
+}
+
+.data-row {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  font-size: 1.2rem;
+  margin: 4px 0;
+}
+
+.pnl-huge {
+  font-size: 2.5rem;
+  font-weight: bold;
+  margin: 10px 0;
+}
+
+.text-green { color: #00aa00; }
+.text-red { color: #cc0000; }
+
+.controls {
+  margin-top: auto;
+  border-top: 4px solid white;
+  padding-top: 1rem;
+  display: flex;
+  gap: 1rem;
+}
+
+.big-btn {
+  font-family: var(--font-main);
+  font-size: 2rem;
+  padding: 10px 30px;
+  border: 4px solid #000;
+  cursor: pointer;
+  text-transform: uppercase;
+  font-weight: bold;
+  box-shadow: 6px 6px 0px rgba(0,0,0,0.5);
+  transition: all 0.1s;
+}
+
+.big-btn:active {
+  transform: translate(4px, 4px);
+  box-shadow: 2px 2px 0px rgba(0,0,0,0.5);
+}
+
+.btn-green { background: var(--color-secondary); color: black; }
+.btn-red { background: var(--color-primary); color: white; }
+.btn-blue { background: var(--color-accent); color: white; }

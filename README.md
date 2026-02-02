@@ -18,33 +18,65 @@ Test your trading strategies, practice risk management, and experience the thril
 - **Persistent State**: Your balance, positions, and orders are saved automatically.
 - **Performance Tracking**: Detailed transaction history (`history.csv`) and PnL analysis.
 
-## Installation
+## Quick Start (Recommended)
 
-1.  **Clone the repository**:
+The easiest way to set up and play (both Web UI and CLI) is to use the automated script:
+
+1.  **Clone and Enter**:
     ```bash
     git clone https://github.com/rentamac/pilk-paper.git
     cd pilk-paper
     ```
 
-2.  **Install dependencies**:
+2.  **Run the Game**:
     ```bash
+    ./run_game.sh
+    ```
+    *This script will automatically create a python virtual environment, install all backend/frontend dependencies, and launch the Web UI.*
+
+---
+
+## Manual Installation
+
+If you prefer to set up manually:
+
+**Prerequisites**:
+- Python 3.9+
+- Node.js & npm (for Web UI)
+
+1.  **Python Environment**:
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate
     pip install -r requirements.txt
+    ```
+
+2.  **Frontend Setup**:
+    ```bash
+    cd web
+    npm install
+    cd ..
     ```
 
 ## How to Play
 
-Start the game by running:
+### Web UI
+1. Start the API Server:
+   ```bash
+   python3 -m uvicorn server.main:app --reload
+   ```
+2. Start the Frontend (new terminal):
+   ```bash
+   cd web && npm run dev
+   ```
+3. Open `http://localhost:5173`.
 
+### CLI Mode (Classic)
+Run the original command-line game:
 ```bash
 python paper_trader.py
 ```
-
-- You start with **1000 USDT**.
-- If your equity drops below **5 USDT**, it's GAME OVER.
-- Use `--new` to restart with a fresh balance:
-    ```bash
-    python paper_trader.py --new
-    ```
+*(Ensure your virtual environment is activated)*
 
 ### Command Reference
 

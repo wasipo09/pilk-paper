@@ -1,3 +1,5 @@
 ccxt
 rich
 pandas
+fastapi
+uvicorn
